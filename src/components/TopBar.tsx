@@ -1,5 +1,6 @@
 import React from 'react';
 import { Terminal } from 'lucide-react';
+import { assetUrl } from '../utils/assetUrl';
 
 export const TopBar: React.FC = () => {
   return (
@@ -16,7 +17,7 @@ export const TopBar: React.FC = () => {
     }}>
       {/* Brand */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <img src="/logo.png" alt="NeonSnip"
+        <img src={assetUrl('logo.png')} alt="NeonSnip"
           style={{ width: '32px', height: '32px', borderRadius: '8px', objectFit: 'cover' }} />
         <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1 }}>
           <span style={{
