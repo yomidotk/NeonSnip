@@ -11,18 +11,17 @@ import {
   buildDrawableVisualLines,
   drawVisualLines,
 } from '../utils/canvasLayout';
-
-const TRACKS = [
-  { id: 'lofi-1', name: 'Rain on Roof', url: '/audio/track1.wav' },
-  { id: 'lofi-2', name: 'Thunderstorm', url: '/audio/track2.wav' },
-  { id: 'lofi-3', name: 'Cafe Ambience', url: '/audio/track3.wav' },
-  { id: 'lofi-4', name: 'Sci-Fi Hum', url: '/audio/track4.wav' },
-  { id: 'lofi-5', name: 'Summer Ambience', url: '/audio/track5.wav' },
-];
+import { AUDIO_TRACKS } from '../config/audioTracks';
 
 const FPS = 30;
 const VIDEO_WIDTH = 1080;
 const VIDEO_HEIGHT = 1920;
+
+async function waitForEncoderQueue(encoder: { encodeQueueSize: number }, maxQueue = 4) {
+  while (encoder.encodeQueueSize > maxQueue) {
+    await new Promise<void>(resolve => setTimeout(resolve, 1));
+  }
+}
 
 export const useExport = (canvasRef: React.RefObject<HTMLCanvasElement | null>) => {
   const store = useStore();
@@ -63,7 +62,7 @@ export const useExport = (canvasRef: React.RefObject<HTMLCanvasElement | null>) 
 
     // ── Set up mp4-muxer ─────────────────────────────────────────────────────
     const { Muxer, ArrayBufferTarget } = await import('mp4-muxer');
-    const track = TRACKS.find(t => t.id === store.audioTrackId);
+    const track = AUDIO_TRACKS.find(t => t.id === store.audioTrackId);
 
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),
@@ -109,6 +108,8 @@ export const useExport = (canvasRef: React.RefObject<HTMLCanvasElement | null>) 
         return;
       }
 
+      await waitForEncoderQueue(videoEncoder);
+
       const elapsedMs = (frame / FPS) * 1000;
       renderFrameToCtx(offCtx, offscreen.width, offscreen.height, elapsedMs, tokens, totalChars, themeDef, store);
 
@@ -121,75 +122,107 @@ export const useExport = (canvasRef: React.RefObject<HTMLCanvasElement | null>) 
       videoEncoder.encode(videoFrame, { keyFrame: frame % (FPS * 2) === 0 });
       videoFrame.close();
 
-      // Update progress (0-70%) and yield to browser every 5 frames
-      if (frame % 5 === 0) {
-        const pct = Math.round((frame / totalFrames) * 70);
-        store.setExportState(true, pct, `Encoding frame ${frame}/${totalFrames}...`);
-        await new Promise(r => setTimeout(r, 0));
+      const pct = Math.min(68, Math.round((frame / totalFrames) * 68));
+      store.setExportState(true, pct, `Encoding frame ${frame}/${totalFrames}...`);
+
+      if (frame % 3 === 0) {
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
       }
     }
 
+    store.setExportState(true, 70, 'Finalizing video...');
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
     await videoEncoder.flush();
     videoEncoder.close();
+    store.setExportState(true, 71, 'Video encoded');
 
     // ── Encode audio ─────────────────────────────────────────────────────────
     if (track && typeof (window as any).AudioEncoder !== 'undefined' && typeof (window as any).AudioData !== 'undefined') {
-      store.setExportState(true, 72, 'Processing audio...');
+      store.setExportState(true, 72, 'Loading audio...');
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+
       try {
         const arrayBuf = await Promise.race([
-          fetch(track.url).then(r => r.arrayBuffer()),
-          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('fetch timeout')), 12_000)),
+          fetch(track.url).then(r => {
+            if (!r.ok) throw new Error(`Failed to load ${track.name}`);
+            return r.arrayBuffer();
+          }),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('Audio fetch timeout')), 30_000)),
         ]) as ArrayBuffer;
 
+        store.setExportState(true, 74, 'Decoding audio...');
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+
         const audioCtx = new AudioContext({ sampleRate: 44100 });
-        const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+        const audioBuf = await audioCtx.decodeAudioData(arrayBuf.slice(0));
         await audioCtx.close();
 
         const sampleRate = 44100;
         const totalSamples = Math.ceil((totalDurationWithTail / 1000) * sampleRate);
-        const srcData = audioBuf.getChannelData(0);
-        const looped = new Float32Array(totalSamples);
-        for (let i = 0; i < totalSamples; i++) looped[i] = srcData[i % srcData.length];
+        const srcLength = audioBuf.length;
+        const srcL = audioBuf.getChannelData(0);
+        const srcR = audioBuf.numberOfChannels > 1 ? audioBuf.getChannelData(1) : null;
 
-        // Encode audio in a worker-like pattern: resolve when all frames flushed
+        const sampleAt = (index: number) => {
+          const srcIndex = index % srcLength;
+          const left = srcL[srcIndex];
+          return srcR ? (left + srcR[srcIndex]) * 0.5 : left;
+        };
+
         const audioChunks: { chunk: any; meta: any }[] = [];
+        let audioEncodeError: Error | null = null;
 
-        await new Promise<void>((resolveAudio, rejectAudio) => {
-          // Safety abort after 15s
-          const abort = setTimeout(() => rejectAudio(new Error('Audio encode timeout')), 15_000);
-
-          const audioEncoder = new (window as any).AudioEncoder({
-            output: (chunk: any, meta: any) => audioChunks.push({ chunk, meta }),
-            error: (e: any) => { clearTimeout(abort); rejectAudio(e); },
-          });
-
-          audioEncoder.configure({ codec: 'mp4a.40.2', sampleRate, numberOfChannels: 1, bitrate: 128_000 });
-
-          const CHUNK = 4096;
-          for (let i = 0; i < totalSamples; i += CHUNK) {
-            const slice = looped.slice(i, Math.min(i + CHUNK, totalSamples));
-            const af = new (window as any).AudioData({
-              format: 'f32', sampleRate, numberOfFrames: slice.length,
-              numberOfChannels: 1, timestamp: Math.round((i / sampleRate) * 1_000_000), data: slice,
-            });
-            audioEncoder.encode(af);
-            af.close();
-          }
-
-          // flush() resolves when all frames are output
-          audioEncoder.flush().then(() => {
-            audioEncoder.close();
-            clearTimeout(abort);
-            resolveAudio();
-          }).catch((e: any) => { clearTimeout(abort); rejectAudio(e); });
+        const audioEncoder = new (window as any).AudioEncoder({
+          output: (chunk: any, meta: any) => audioChunks.push({ chunk, meta }),
+          error: (e: any) => { audioEncodeError = e; },
         });
 
+        audioEncoder.configure({ codec: 'mp4a.40.2', sampleRate, numberOfChannels: 1, bitrate: 128_000 });
+
+        const CHUNK = 4096;
+        for (let i = 0; i < totalSamples; i += CHUNK) {
+          if (audioEncodeError) throw audioEncodeError;
+
+          await waitForEncoderQueue(audioEncoder);
+
+          const chunkLen = Math.min(CHUNK, totalSamples - i);
+          const slice = new Float32Array(chunkLen);
+          for (let j = 0; j < chunkLen; j++) {
+            slice[j] = sampleAt(i + j);
+          }
+
+          const af = new (window as any).AudioData({
+            format: 'f32',
+            sampleRate,
+            numberOfFrames: chunkLen,
+            numberOfChannels: 1,
+            timestamp: Math.round((i / sampleRate) * 1_000_000),
+            data: slice,
+          });
+
+          const encodeResult = audioEncoder.encode(af);
+          if (encodeResult?.then) await encodeResult;
+          af.close();
+
+          if (i % (CHUNK * 12) === 0) {
+            const pct = 74 + Math.round((i / totalSamples) * 14);
+            store.setExportState(true, pct, 'Encoding audio...');
+            await new Promise<void>(resolve => setTimeout(resolve, 0));
+          }
+        }
+
+        store.setExportState(true, 88, 'Finalizing audio...');
+        await audioEncoder.flush();
+        audioEncoder.close();
+
         for (const { chunk, meta } of audioChunks) muxer.addAudioChunk(chunk, meta);
-        store.setExportState(true, 90, 'Finalizing MP4...');
+        store.setExportState(true, 90, 'Muxing audio...');
       } catch (audioErr) {
         console.warn('Audio skipped:', audioErr);
         toast('Audio skipped — video exported without sound.', { icon: '⚠️' });
       }
+    } else if (track) {
+      toast('Audio skipped — browser audio encoder unavailable.', { icon: '⚠️' });
     }
 
     // ── Finalize & download ──────────────────────────────────────────────────

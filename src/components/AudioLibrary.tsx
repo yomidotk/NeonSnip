@@ -1,13 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
-
-const TRACKS = [
-  { id: 'lofi-1', name: 'Rain on Roof',    url: '/audio/track1.wav', icon: '🌧️' },
-  { id: 'lofi-2', name: 'Thunderstorm',    url: '/audio/track2.wav', icon: '⛈️' },
-  { id: 'lofi-3', name: 'Cafe Ambience',   url: '/audio/track3.wav', icon: '☕' },
-  { id: 'lofi-4', name: 'Sci-Fi Hum',      url: '/audio/track4.wav', icon: '🔮' },
-  { id: 'lofi-5', name: 'Summer Ambience', url: '/audio/track5.wav', icon: '🌿' },
-];
+import { AUDIO_TRACKS } from '../config/audioTracks';
 
 export const AudioLibrary: React.FC = () => {
   const audioTrackId = useStore(state => state.audioTrackId);
@@ -73,7 +66,7 @@ export const AudioLibrary: React.FC = () => {
           <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>No Audio</span>
         </button>
 
-        {TRACKS.map(track => (
+        {AUDIO_TRACKS.map(track => (
           <div key={track.id} style={{
             display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px',
             borderRadius: '8px', border: `1px solid ${audioTrackId === track.id ? 'var(--purple)' : 'var(--border)'}`,
