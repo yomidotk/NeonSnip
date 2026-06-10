@@ -36,7 +36,7 @@ node scripts/gen-audio.cjs
 npm run dev
 ```
 
-Then open [http://localhost:5173](http://localhost:5173).
+Then open localhost
 
 > **Build for production:**
 > ```bash
