@@ -39,7 +39,13 @@ node scripts/gen-audio.cjs
 npm run dev
 ```
 
+<<<<<<< HEAD
 > **Production build:**
+=======
+Then open localhost
+
+> **Build for production:**
+>>>>>>> 4304ccf16ce061f49be925293c5f6f3dc852684c
 > ```bash
 > npm run build
 > ```
