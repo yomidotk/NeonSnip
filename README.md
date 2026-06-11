@@ -1,131 +1,162 @@
-# 🎬 NeonSnip: Code-to-Reel Animator
+# 🎬 NeonSnip — Code-to-Reel Animator
 
-> Turn your code into a stunning vertical short-form video — no server, no account, no upload. Everything happens in your browser.
+> Paste any code snippet → get a stunning vertical MP4 video with a live typewriter effect, neon themes, and ambient music — all inside your browser. No server. No upload. No account.
 
-![NeonSnip Banner](https://img.shields.io/badge/NeonSnip-Code--to--Reel-blueviolet?style=for-the-badge&logo=film)
-![React](https://img.shields.io/badge/React_18-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![NeonSnip](https://img.shields.io/badge/NeonSnip-Code--to--Reel-blueviolet?style=for-the-badge&logo=film)
+![React](https://img.shields.io/badge/React_19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+![WebCodecs](https://img.shields.io/badge/WebCodecs-H.264-orange?style=for-the-badge&logo=google-chrome&logoColor=white)
 
 ---
 
 ## ✨ What is NeonSnip?
 
-NeonSnip lets you paste any code snippet and export it as a **9:16 vertical MP4 video** (1080×1920 — perfect for TikTok, YouTube Shorts, Instagram Reels) where:
+NeonSnip turns any code snippet into a **9:16 vertical MP4 video** (1080×1920 — TikTok / YouTube Shorts / Instagram Reels format) where:
 
-- The code **types itself out** character-by-character or line-by-line
-- A blinking **cursor** moves along as it types
-- Everything is overlaid on a **high-contrast dark theme** with optional neon glow
-- An **ambient audio track** is baked into the exported video
-- The output is a real **H.264 MP4 file** — ready to upload anywhere
+- The code **types itself out** character-by-character or line-by-line with a realistic typewriter effect
+- A blinking **cursor** tracks the current position with configurable neon glow
+- Code is **syntax-highlighted** using VS Code–grade Shiki themes (Dracula, Synthwave 84, Monokai, Nord)
+- An optional **ambient audio track** is baked directly into the exported MP4
+- The output is a real **H.264 MP4** — ready to upload anywhere
 
-**Zero server. Zero upload. Zero subscription.**
+**Zero server. Zero upload. Zero subscription. Everything runs in your browser.**
 
 ---
 
 ## 🚀 Quick Start
 
 ```bash
-# Install dependencies
+# 1. Install dependencies
 npm install
 
-# Generate the ambient audio tracks (run once)
+# 2. Add audio tracks to public/audio/
+#    Either drop your own MP3s in (named as listed in src/config/audioTracks.ts)
+#    or generate placeholder WAVs with the bundled script:
 node scripts/gen-audio.cjs
 
-# Start the dev server
+# 3. Start the development server
 npm run dev
 ```
 
-Then open [http://localhost:5173](http://localhost:5173).
-
-> **Build for production:**
+> **Production build:**
 > ```bash
 > npm run build
 > ```
+> Output goes to `./dist`. Deploy that folder anywhere (see [Deployment](#-deployment)).
 
 ---
 
 ## 🏗️ How It Works — Under the Hood
 
-### 1. Code Input & Syntax Highlighting
+### 1. Code Input & Syntax Highlighting (`src/utils/tokenizer.ts`)
 
-When you paste code into the editor panel, NeonSnip sends it to **[Shiki](https://shiki.style/)** — the same VS Code-grade tokenizer used in VS Code itself. Shiki runs entirely in the browser via WebAssembly and returns an array of **themed tokens**: each character grouped with its exact hex colour according to the chosen theme (Dracula, Synthwave 84, Monokai, Nord, etc.).
-
-```
-Code string → Shiki WASM → ThemedToken[][] (per line, per token with colour)
-```
-
-### 2. Typewriter Engine
-
-The `typewriterEngine.ts` module is a **pure function** (no side effects, no timers). It takes:
-
-- `elapsedMs` — how many milliseconds have passed since the animation started
-- `wpm` — the typing speed set by the user (words per minute)
-- `revealMode` — `"char"` (one character at a time) or `"line"` (one full line at a time)
-- The full token array
-
-And returns `{ charsToReveal, linesToReveal }` — exactly how many characters (or lines) should be visible at that point in time. This deterministic design means the **exact same frame is produced for the exact same timestamp** every time, which is critical for reliable video export.
-
-### 3. Canvas Renderer
-
-The live preview and the export both use the same rendering function. It:
-
-1. **Clears** the canvas (`1080×1920` pixels)
-2. **Fills** the background with the theme's background colour
-3. Optionally draws **scanlines** (subtle horizontal lines for a retro CRT look)
-4. Loops through the token array, drawing only the tokens that `charsToReveal` allows using `ctx.fillText()`
-5. Calculates the **cursor position** (pixel-exact based on `ctx.measureText()`)
-6. **Auto-scrolls** — when the cursor passes 65% of the canvas height, everything shifts up so the cursor stays in view
-7. Draws the **cursor** (block / line / underscore, with configurable neon glow via `ctx.shadowBlur`)
-
-For the **live preview**, this runs inside a `requestAnimationFrame` loop via the `useCanvasRenderer` hook, updating ~60 times per second.
-
-### 4. Export Pipeline — Canvas → MP4
-
-This is where NeonSnip does something unusual. Instead of using a server or FFmpeg, the entire encoding pipeline runs in the browser using the **WebCodecs API** (Chrome 94+):
+When you paste code, NeonSnip sends it to **[Shiki](https://shiki.style/)** — the same tokenizer used inside VS Code. Shiki runs entirely in the browser via WebAssembly and returns a `ThemedToken[][]` array: every character grouped with its exact hex colour for the chosen theme.
 
 ```
-OffscreenCanvas frames
-    ↓
-VideoEncoder (H.264 / AVC High Profile Level 5.1)
-    ↓
-mp4-muxer (pure JS MP4 container)
-    ↓  (if audio selected)
-AudioEncoder (AAC-LC)
-    ↓
-neonsnip_export.mp4  ← downloaded to your device
+Code string
+  → Shiki (WASM, lazy-loaded once)
+  → ThemedToken[][]  (one array per source line, each token has .content + .color)
 ```
 
-**Step-by-step:**
+Supported languages: `javascript`, `typescript`, `python`, `java`, `html`, `css`, `json`, `markdown`, `rust`, `go`.
 
-1. **Frame rendering loop** — For each of the `totalFrames` (calculated from typing speed × code length + 2s tail), NeonSnip draws the frame for that exact timestamp onto an `OffscreenCanvas` (invisible, never shown to the user)
+---
 
-2. **VideoEncoder** — Each canvas frame is passed to the browser's native `VideoEncoder` as a `VideoFrame`. The encoder compresses it to H.264 at 8 Mbps. A keyframe is inserted every 2 seconds.
+### 2. Typewriter Engine (`src/utils/typewriterEngine.ts`)
 
-3. **mp4-muxer** — As encoded chunks come out of VideoEncoder, they are fed to `mp4-muxer` which assembles them into a valid MP4 container with correct duration metadata, timecodes and moov atom structure.
+A **pure, side-effect-free function** that answers: *"given N milliseconds elapsed and a WPM speed, how many characters (or lines) should be visible right now?"*
 
-4. **Audio (optional)** — If you selected an audio track:
-   - The WAV file is fetched from `/audio/`
-   - Decoded with `AudioContext.decodeAudioData()`
-   - Looped programmatically to match the video duration
-   - Encoded to AAC-LC with `AudioEncoder`
-   - Added to the muxer as a second track
+```ts
+calculateVisibleContent({ elapsedMs, wpm, revealMode, totalCharsInCode }, tokens)
+// → { charsToReveal, linesToReveal, isFinished }
+```
 
-5. **Download** — `muxer.finalize()` is called, the resulting `ArrayBuffer` is wrapped in a `Blob`, a temporary object URL is created, and a hidden `<a>` tag triggers the browser's native download.
+Because it is deterministic, the **exact same frame is produced for the exact same timestamp** — which is critical for reliable, glitch-free video export.
 
-### 5. Audio Library
+- **`char` mode** — reveals characters progressively, cursor moves within a line
+- **`line` mode** — reveals one full source line at a time, cursor jumps to the next line start
 
-Five ambient audio tracks are included, generated locally by `scripts/gen-audio.cjs` using pure math (no external dependencies):
+---
 
-| Track | Type | How it's made |
-|-------|------|---------------|
-| Rain on Roof | Pink noise | Paul Kellet's pink noise filter |
-| Thunderstorm | Louder pink noise | Same filter, higher amplitude |
-| Cafe Ambience | Chord + noise | Sine waves (C4/E4/G4) + tremolo + white noise |
-| Sci-Fi Hum | Drone | Stacked sine harmonics at 55Hz + subtle noise |
-| Summer Ambience | Cricket-like | High-frequency oscillators (3.2–4.2kHz) + pink noise |
+### 3. Canvas Renderer (`src/utils/canvasLayout.ts` + `src/hooks/useCanvasRenderer.ts`)
 
-All tracks are 30-second WAV files that loop seamlessly during export.
+The live preview and the video export share the **same rendering logic**:
+
+1. **Clear** the canvas (1080×1920 px)
+2. **Fill** background with the theme colour
+3. Optionally draw **scanlines** (thin horizontal strips every 4px — retro CRT look)
+4. Compute the `CanvasLayout` (font size, padding, line height, gutter width)
+5. Wrap long source lines into **visual lines** (`wrapTokensToVisualLines`) so nothing overflows
+6. **Draw only the revealed portion** of each visual line using `ctx.fillText()` with per-token colours
+7. Find the **cursor position** (pixel-exact via `ctx.measureText()`)
+8. **Auto-scroll** — when the cursor crosses 65% of canvas height, offset everything upward so the cursor stays in view (`computeScrollOffset`)
+9. Draw the **cursor** (block / line / underscore) with `ctx.shadowBlur` neon glow
+
+For the **live preview**, this runs inside a `requestAnimationFrame` loop (~60 fps).  
+For **export**, it runs frame-by-frame into an `OffscreenCanvas`.
+
+---
+
+### 4. Export Pipeline — Canvas → MP4 (`src/hooks/useExport.ts`)
+
+The entire encoding pipeline lives in the browser using the **WebCodecs API** (Chrome 94+):
+
+```
+OffscreenCanvas  (1080×1920, rendered frame by frame)
+        ↓
+VideoEncoder     (H.264 AVC High Profile Level 5.1 — 8 Mbps, 30 fps)
+        ↓
+mp4-muxer        (pure JS, correct moov/duration metadata, no WASM)
+        ↓  ← optional audio path
+AudioEncoder     (AAC-LC, 44 100 Hz, 128 kbps — looped to match video length)
+        ↓
+neonsnip_export.mp4   ← downloaded directly to your device
+```
+
+**Step-by-step walkthrough:**
+
+| Step | What happens |
+|------|-------------|
+| **Tokenize** | Shiki converts the code string into `ThemedToken[][]` |
+| **Duration** | Total frames = `(code_length / chars_per_sec + 2 s tail) × 30 fps` |
+| **Frame loop** | For each frame, `renderFrameToCtx` draws the correct typewriter state to an `OffscreenCanvas` |
+| **VideoEncoder** | Each frame is wrapped in a `VideoFrame` and pushed to the browser's native H.264 encoder; keyframes every 2 s |
+| **mp4-muxer** | Encoded chunks are handed to `mp4-muxer` which assembles a valid MP4 with proper timecodes |
+| **Audio** | Selected MP3 is fetched, decoded with `AudioContext`, looped to fill the video duration, re-encoded as AAC-LC, and added as a second mux track |
+| **Download** | `muxer.finalize()` → `Blob` → object URL → hidden `<a>` click |
+
+> **Back-pressure** — `waitForEncoderQueue` pauses the frame loop whenever the encoder's internal queue grows beyond 4 pending frames, preventing memory spikes during long exports.
+
+---
+
+### 5. State Management (`src/store/useStore.ts`)
+
+All configuration is held in a single **Zustand store** — no prop drilling, no Context boilerplate:
+
+| Slice | Key fields |
+|-------|-----------|
+| Code Input | `code`, `language` |
+| Theme | `themeId`, `accentHue` |
+| Animation | `typingSpeedWpm`, `cursorStyle`, `cursorBlinkRate`, `revealMode`, `fontSize`, `padding`, `showScanlines`, `showLineNumbers` |
+| Audio | `audioTrackId`, `audioVolume` |
+| Export | `isExporting`, `exportProgress`, `exportStage` |
+
+---
+
+### 6. Audio Library (`src/config/audioTracks.ts` + `scripts/gen-audio.cjs`)
+
+Five ambient MP3 tracks live in `public/audio/`. The `scripts/gen-audio.cjs` helper can generate placeholder WAV versions using pure Node.js math (no external dependencies):
+
+| Track | File | Synthesis technique |
+|-------|------|---------------------|
+| Code Chill | `code-chill.mp3` | Pink noise (Paul Kellet's filter) |
+| Good Night | `good-night.mp3` | Louder pink noise |
+| Mirostar | `mirostar.mp3` | Cafe-style: C4/E4/G4 sine chords + tremolo + white noise |
+| Pulsebox | `pulsebox.mp3` | Sci-Fi drone: stacked sine harmonics at 55 Hz |
+| The Mountain | `the_mountain.mp3` | High-frequency oscillators (3.2–4.2 kHz) + pink noise |
+
+Tracks are looped programmatically during export — no seamless-loop editing required.
 
 ---
 
@@ -133,15 +164,17 @@ All tracks are 30-second WAV files that loop seamlessly during export.
 
 | Layer | Technology | Why |
 |-------|-----------|-----|
-| Framework | React 18 + Vite | Fast HMR, modern React features |
-| Language | TypeScript | Type safety across the entire pipeline |
-| Styling | TailwindCSS v4 | Utility-first, minimal custom CSS |
-| State | Zustand | Minimal boilerplate, reactive store |
-| Syntax HL | Shiki | VS Code-grade themes, WASM-powered |
-| Video encode | WebCodecs API (VideoEncoder) | Native H.264 encoding, no server |
-| MP4 mux | mp4-muxer | Pure JS, no WASM, correct duration metadata |
-| Audio | Web Audio API + AudioEncoder | Native AAC encoding, no dependencies |
-| Notifications | react-hot-toast | Non-intrusive toasts |
+| Framework | **React 19** + Vite 8 | Latest React features, fast HMR |
+| Language | **TypeScript 6** | End-to-end type safety |
+| Styling | **TailwindCSS v4** + Vanilla CSS | Utility classes + custom design tokens |
+| State | **Zustand** | Minimal boilerplate, reactive global store |
+| Syntax HL | **Shiki** (WASM) | VS Code–grade token colours, browser-native |
+| Video encode | **WebCodecs API** — `VideoEncoder` | Native H.264 encoding, zero server |
+| MP4 container | **mp4-muxer** | Pure JS, correct `moov` metadata, in-memory |
+| Audio encode | **WebCodecs API** — `AudioEncoder` | Native AAC-LC, no FFmpeg WASM |
+| Audio playback | **Howler.js** | Preview playback in the UI |
+| Notifications | **react-hot-toast** | Non-intrusive status toasts |
+| Icons | **Lucide React** | Consistent SVG icon set |
 
 ---
 
@@ -149,68 +182,99 @@ All tracks are 30-second WAV files that loop seamlessly during export.
 
 ```
 neonsnip/
+├── .github/
+│   └── workflows/
+│       └── deploy.yml          # GitHub Actions → GitHub Pages CI/CD
 ├── public/
-│   └── audio/                  # Generated WAV ambient tracks (track1-5.wav)
+│   ├── audio/                  # Ambient MP3 tracks (code-chill, good-night, …)
+│   ├── favicon.svg
+│   ├── icons.svg
+│   └── logo.png
 ├── scripts/
-│   └── gen-audio.cjs           # Node.js script to regenerate audio tracks
+│   └── gen-audio.cjs           # Node.js script to generate placeholder WAV audio
 ├── src/
 │   ├── components/
-│   │   ├── TopBar.tsx           # App header with branding
-│   │   ├── CodeInput.tsx        # Code textarea + language selector
+│   │   ├── TopBar.tsx           # Header — branding + GitHub link
+│   │   ├── CodeInput.tsx        # Code textarea + language selector dropdown
 │   │   ├── ThemeSelector.tsx    # Theme picker + accent hue slider
-│   │   ├── AnimationConfig.tsx  # Speed, font size, cursor, reveal mode
-│   │   ├── AudioLibrary.tsx     # Track picker + preview playback
-│   │   ├── ExportPanel.tsx      # Export button + progress bar
-│   │   └── CanvasPreview.tsx    # Live 9:16 canvas preview (forwardRef)
+│   │   ├── AnimationConfig.tsx  # Speed, font size, cursor style, reveal mode, scanlines
+│   │   ├── AudioLibrary.tsx     # Track picker + live preview playback (Howler.js)
+│   │   ├── ExportPanel.tsx      # Export button, progress bar, stats display
+│   │   └── CanvasPreview.tsx    # Live 9:16 canvas (forwardRef → useCanvasRenderer)
+│   ├── config/
+│   │   └── audioTracks.ts       # Audio track manifest (id, name, url, icon)
 │   ├── hooks/
 │   │   ├── useCanvasRenderer.ts # requestAnimationFrame live preview loop
-│   │   └── useExport.ts         # Full VideoEncoder → mp4-muxer pipeline
+│   │   └── useExport.ts         # Full WebCodecs → mp4-muxer export pipeline
 │   ├── store/
-│   │   └── useStore.ts          # Zustand global state
+│   │   └── useStore.ts          # Zustand global state (all config + export state)
 │   ├── themes/
-│   │   └── themes.ts            # Theme definitions (colours, glow, cursor)
+│   │   └── themes.ts            # Theme definitions (shikiTheme, bgColor, cursorColor, glow)
 │   ├── utils/
-│   │   ├── tokenizer.ts         # Shiki wrapper (lazy-loads highlighter)
-│   │   ├── typewriterEngine.ts  # Deterministic char/line reveal calculator
-│   │   └── ffmpegEncoder.ts     # (Legacy — unused, kept for reference)
-│   ├── App.tsx                  # Root layout, ref wiring, export handler
-│   ├── main.tsx                 # React entry point
-│   └── index.css               # Global styles + Tailwind import
-├── vite.config.ts              # COOP/COEP headers, dependency exclusions
-└── postcss.config.js           # @tailwindcss/postcss plugin
+│   │   ├── assetUrl.ts          # Resolves public/ paths relative to Vite base (/NeonSnip/)
+│   │   ├── canvasLayout.ts      # Layout calc, token wrapping, cursor finding, scroll, draw
+│   │   ├── tokenizer.ts         # Shiki wrapper — lazy-loads highlighter once, caches it
+│   │   ├── typewriterEngine.ts  # Pure deterministic char/line reveal calculator
+│   │   └── ffmpegEncoder.ts     # Legacy FFmpeg/WASM muxer — kept for reference, not used
+│   ├── App.tsx                  # Root layout (3-column grid), canvas ref, export handler
+│   ├── index.css                # Global CSS variables, panel styles, scrollbar overrides
+│   └── main.tsx                 # React entry point
+├── index.html                   # HTML shell — JetBrains Mono font, root div
+├── vite.config.ts               # COOP/COEP headers, /NeonSnip/ base, ffmpeg exclusions
+├── tailwind.config.ts           # TailwindCSS v4 config
+├── postcss.config.js            # @tailwindcss/postcss plugin
+├── tsconfig.json / tsconfig.app.json / tsconfig.node.json
+└── eslint.config.js
 ```
 
 ---
 
-## ⚙️ Configuration Options
+## ⚙️ Configuration Reference
 
-### Animation Config
-| Setting | Range | Description |
-|---------|-------|-------------|
-| Speed (WPM) | 30–400 | How fast the code types out |
-| Font Size | 20–80px | Code text size on the 1080px canvas |
-| Cursor Style | Block / Line / Underscore | Shape of the blinking cursor |
-| Reveal Mode | By Character / By Line | Whether to reveal char-by-char or full lines |
-| Scanlines | On/Off | Retro CRT scanline overlay |
-| Line Numbers | On/Off | Gutter line numbers |
+### Animation
+
+| Setting | Range / Options | Default | Description |
+|---------|----------------|---------|-------------|
+| Speed (WPM) | 30 – 400 | 150 | Typing speed in words per minute |
+| Font Size | 20 – 80 px | 40 px | Code font size on the 1080 px canvas |
+| Padding | any | 60 px | Canvas edge padding |
+| Cursor Style | `block` / `line` / `underscore` | `block` | Shape of the blinking cursor |
+| Cursor Blink Rate | ms | 500 ms | How fast the cursor blinks |
+| Reveal Mode | `char` / `line` | `char` | Reveal character-by-character or full lines |
+| Scanlines | on / off | on | Retro CRT horizontal line overlay |
+| Line Numbers | on / off | on | Show gutter line numbers |
 
 ### Themes
-| Theme | Shiki Base | Accent |
-|-------|-----------|--------|
-| Neon Tokyo | `tokyo-night` | Purple |
-| Hacker Green | `github-dark` | Green |
-| Acid Purple | `synthwave-84` | Pink/Purple |
-| Midnight Blue | `night-owl` | Blue |
 
-The **Accent Hue** slider (0°–360°) overrides the cursor and glow colour in real-time.
+| Theme ID | Shiki Base | Background | Cursor / Glow |
+|----------|-----------|-----------|----------------|
+| `neon-tokyo` | `dracula` | `#09090b` (zinc-950) | Rose — `#f43f5e` |
+| `acid-purple` | `synthwave-84` | `#1e013f` (deep purple) | Fuchsia — `#d946ef` |
+| `hacker-green` | `monokai` | `#020617` (slate-950) | Green — `#22c55e` |
+| `midnight-blue` | `nord` | `#0f172a` (slate-900) | Sky — `#38bdf8` |
+
+The **Accent Hue** slider (0°–360°) overrides the cursor and glow colour in real-time without changing the syntax highlight scheme.
 
 ---
 
 ## 🌐 Deployment
 
-NeonSnip requires two HTTP headers to use the WebCodecs API and OffscreenCanvas. Add these to your host config:
+### GitHub Pages (automated — included in this repo)
 
-### Vercel (`vercel.json`)
+Push to `main` — the [deploy.yml](.github/workflows/deploy.yml) workflow runs `npm run build` and publishes `./dist` to the `gh-pages` branch automatically.
+
+The Vite `base` is set to `/NeonSnip/` in `vite.config.ts`, so all asset URLs are correct on GitHub Pages out of the box.
+
+### Other Hosts
+
+NeonSnip requires two HTTP response headers to enable **SharedArrayBuffer** (needed by WebCodecs and OffscreenCanvas):
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+**Vercel** — add `vercel.json`:
 ```json
 {
   "headers": [
@@ -225,7 +289,7 @@ NeonSnip requires two HTTP headers to use the WebCodecs API and OffscreenCanvas.
 }
 ```
 
-### Netlify (`netlify.toml`)
+**Netlify** — add `netlify.toml`:
 ```toml
 [[headers]]
   for = "/*"
@@ -234,33 +298,34 @@ NeonSnip requires two HTTP headers to use the WebCodecs API and OffscreenCanvas.
     Cross-Origin-Embedder-Policy = "require-corp"
 ```
 
-### Nginx
+**Nginx**:
 ```nginx
-add_header Cross-Origin-Opener-Policy "same-origin";
-add_header Cross-Origin-Embedder-Policy "require-corp";
+add_header Cross-Origin-Opener-Policy "same-origin" always;
+add_header Cross-Origin-Embedder-Policy "require-corp" always;
 ```
 
-> **Note:** These headers are already set automatically in the Vite dev server via `vite.config.ts`.
+> These headers are set automatically in the Vite dev server via `vite.config.ts` — you don't need to do anything locally.
 
 ---
 
 ## 🔒 Browser Requirements
 
-| Feature | Minimum Version |
-|---------|----------------|
-| `VideoEncoder` (WebCodecs) | Chrome 94+ / Edge 94+ |
-| `OffscreenCanvas` | Chrome 69+ / Edge 79+ |
-| `AudioEncoder` | Chrome 94+ / Edge 94+ |
-| `MediaRecorder` | All modern browsers |
+| API | Minimum version |
+|-----|----------------|
+| `VideoEncoder` (WebCodecs) | Chrome 94+ · Edge 94+ |
+| `AudioEncoder` (WebCodecs) | Chrome 94+ · Edge 94+ |
+| `OffscreenCanvas` | Chrome 69+ · Edge 79+ |
+| `AudioContext` | All modern browsers |
 
-> Firefox does not yet support `VideoEncoder`. Safari support is partial. **Chrome is recommended.**
+> Firefox does not yet support `VideoEncoder`. Safari support is partial.  
+> **Chrome or Edge is required for the export feature.**
 
 ---
 
 ## 📄 License
 
-MIT — free to use, modify, and deploy.
+MIT — free to use, modify, fork, and deploy.
 
 ---
 
-*Built with ❤️ using React, WebCodecs, and a lot of canvas math.*
+*Built with React 19, WebCodecs, Shiki, and a lot of canvas math.*
